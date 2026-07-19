@@ -1,0 +1,67 @@
+name: Build Hybrid Moonlight IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Limelight/Input/AbsoluteTouchHandler.m'
+      - 'Limelight/ViewControllers/StreamFrameViewController.m'
+      - 'apply_moonlight_hybrid_touch.py'
+      - '.github/workflows/build-hybrid-moonlight-ipa.yml'
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out Moonlight and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Apply hybrid touch patch
+        run: python3 apply_moonlight_hybrid_touch.py
+
+      - name: Show available Xcode version
+        run: xcodebuild -version
+
+      - name: Build unsigned iPad app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Moonlight.xcodeproj \
+            -scheme Moonlight \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$RUNNER_TEMP/MoonlightDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find "$RUNNER_TEMP/MoonlightDerivedData/Build/Products/Release-iphoneos" \
+            -maxdepth 1 -type d -name '*.app' | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "Moonlight .app bundle was not found."
+            find "$RUNNER_TEMP/MoonlightDerivedData/Build/Products" -maxdepth 3 -print
+            exit 1
+          fi
+
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/Moonlight-Hybrid-Touch-Unsigned.ipa" Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Moonlight-Hybrid-Touch-Unsigned-IPA
+          path: Moonlight-Hybrid-Touch-Unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
